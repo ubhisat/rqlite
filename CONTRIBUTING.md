@@ -1,16 +1,21 @@
 # Contributing to rqlite
 rqlite is software, and it goes without saying it can always be improved. It's by no means finished -- issues are tracked, and I plan to develop this project further. Pull requests are very welcome.
 
+rqlite can be compiled and executed on Linux, OSX, and Microsoft Windows.
+
+## Google Group
+You may also wish to check out the [rqlite Google Group](https://groups.google.com/forum/#!forum/rqlite).
+
 ## Clean commit histories
 If you open a pull request, please ensure the commit history is clean. Squash the commits into logical blocks, perhaps a single commit if that makes sense. What you want to avoid is commits such as "WIP" and "fix test" in the history. This is so we keep history on master clean and straightforward.
 
 ## Third-party libraries
-Please avoid using libaries other than those available in the standard library, unless absolutely necessary. This requirement is relaxed somewhat for software other than rqlite node software itself. To understand why this requirement is in place, check out this [post](https://blog.gopheracademy.com/advent-2014/case-against-3pl/). 
+Please avoid using libaries other than those available in the standard library, unless absolutely necessary. This requirement is relaxed somewhat for software other than rqlite node software itself. To understand why this approach is taken, check out this [post](https://blog.gopheracademy.com/advent-2014/case-against-3pl/).
 
 ## Building rqlite
-*Building rqlite requires Go 1.5 or later. [gvm](https://github.com/moovweb/gvm) is a great tool for managing your version of Go.*
+*Building rqlite requires Go 1.10 or later. [gvm](https://github.com/moovweb/gvm) is a great tool for installing and managing your versions of Go.*
 
-Download and run rqlite like so (tested on 64-bit Kubuntu 14.04 and OSX):
+Download, build, and run rqlite like so (tested on 64-bit Kubuntu 16.0 and OSX):
 
 ```bash
 mkdir rqlite # Or any directory of your choice.
@@ -19,8 +24,17 @@ export GOPATH=$PWD
 go get -u -t github.com/rqlite/rqlite/...
 $GOPATH/bin/rqlited ~/node.1
 ```
-
 This starts a rqlite server listening on localhost, port 4001. This single node automatically becomes the leader.
+
+To rebuild, perhaps after making some changes to the source, do something like the following:
+```bash
+cd $GOPATH/src/github.com/rqlite/rqlite
+go install ./...
+$GOPATH/bin/rqlited ~/node.1
+```
+
+### Raspberry Pi
+The process outlined above will work for Linux, OSX, and Windows. For Raspberry Pi, check out [this issue](https://github.com/rqlite/rqlite/issues/340).
 
 ### Speeding up the build process
 It can be rather slow to rebuild rqlite, due to the repeated compilation of SQLite support. You can compile and install this library once, so subsequent builds are much faster. To do so, execute the following commands:

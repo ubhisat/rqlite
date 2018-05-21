@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -14,12 +13,14 @@ import (
 
 	httpd "github.com/rqlite/rqlite/http"
 	"github.com/rqlite/rqlite/store"
+	"github.com/rqlite/rqlite/tcp"
 )
 
 // Node represents a node under test.
 type Node struct {
 	APIAddr  string
 	RaftAddr string
+	ID       string
 	Dir      string
 	Store    *store.Store
 	Service  *httpd.Service
@@ -73,15 +74,18 @@ func (n *Node) Query(stmt string) (string, error) {
 	return string(body), nil
 }
 
+// QueryMulti runs multiple queries against the node.
+func (n *Node) QueryMulti(stmts []string) (string, error) {
+	j, err := json.Marshal(stmts)
+	if err != nil {
+		return "", err
+	}
+	return n.postQuery(string(j))
+}
+
 // Join instructs this node to join the leader.
 func (n *Node) Join(leader *Node) error {
-	b, err := json.Marshal(map[string]string{"addr": n.RaftAddr})
-	if err != nil {
-		return err
-	}
-
-	// Attempt to join leader
-	resp, err := http.Post("http://"+leader.APIAddr+"/join", "application-type/json", bytes.NewReader(b))
+	resp, err := DoJoinRequest(leader.APIAddr, n.Store.ID(), n.RaftAddr)
 	if err != nil {
 		return err
 	}
@@ -90,6 +94,44 @@ func (n *Node) Join(leader *Node) error {
 	}
 	defer resp.Body.Close()
 	return nil
+}
+
+// Status returns the status and diagnostic output for node.
+func (n *Node) Status() (string, error) {
+	v, _ := url.Parse("http://" + n.APIAddr + "/status")
+
+	resp, err := http.Get(v.String())
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("status endpoint returned: %s", resp.Status)
+	}
+	defer resp.Body.Close()
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	return string(body), nil
+}
+
+// Expvar returns the expvar output for node.
+func (n *Node) Expvar() (string, error) {
+	v, _ := url.Parse("http://" + n.APIAddr + "/debug/vars")
+
+	resp, err := http.Get(v.String())
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("expvar endpoint returned: %s", resp.Status)
+	}
+	defer resp.Body.Close()
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	return string(body), nil
 }
 
 // ConfirmRedirect confirms that the node responds with a redirect to the given host.
@@ -114,6 +156,19 @@ func (n *Node) ConfirmRedirect(host string) bool {
 
 func (n *Node) postExecute(stmt string) (string, error) {
 	resp, err := http.Post("http://"+n.APIAddr+"/db/execute", "application/json", strings.NewReader(stmt))
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	return string(body), nil
+}
+
+func (n *Node) postQuery(stmt string) (string, error) {
+	resp, err := http.Post("http://"+n.APIAddr+"/db/query", "application/json", strings.NewReader(stmt))
 	if err != nil {
 		return "", err
 	}
@@ -160,7 +215,7 @@ func (c Cluster) WaitForNewLeader(old *Node) (*Node, error) {
 	}
 }
 
-// Followers returns the slide of nodes in the cluster that are followers.
+// Followers returns the slice of nodes in the cluster that are followers.
 func (c Cluster) Followers() ([]*Node, error) {
 	n, err := c[0].WaitForLeader()
 	if err != nil {
@@ -227,20 +282,45 @@ func Remove(n *Node, addr string) error {
 	return nil
 }
 
+// DoJoinRequest sends a join request to nodeAddr, for raftID, reachable at raftAddr.
+func DoJoinRequest(nodeAddr, raftID, raftAddr string) (*http.Response, error) {
+	b, err := json.Marshal(map[string]string{"id": raftID, "addr": raftAddr})
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := http.Post("http://"+nodeAddr+"/join", "application-type/json", bytes.NewReader(b))
+	if err != nil {
+		return nil, err
+	}
+
+	return resp, nil
+}
+
 func mustNewNode(enableSingle bool) *Node {
 	node := &Node{
 		Dir: mustTempDir(),
 	}
 
 	dbConf := store.NewDBConfig("", false)
-	node.Store = store.New(dbConf, node.Dir, mustMockTransport("localhost:0"))
+	tn := tcp.NewTransport()
+	if err := tn.Open("localhost:0"); err != nil {
+		panic(err.Error())
+	}
+	node.Store = store.New(tn, &store.StoreConfig{
+		DBConf: dbConf,
+		Dir:    node.Dir,
+		ID:     tn.Addr().String(),
+	})
 	if err := node.Store.Open(enableSingle); err != nil {
 		node.Deprovision()
 		panic(fmt.Sprintf("failed to open store: %s", err.Error()))
 	}
-	node.RaftAddr = node.Store.Addr().String()
+	node.RaftAddr = node.Store.Addr()
+	node.ID = node.Store.ID()
 
 	node.Service = httpd.New("localhost:0", node.Store, nil)
+	node.Service.Expvar = true
 	if err := node.Service.Start(); err != nil {
 		node.Deprovision()
 		panic(fmt.Sprintf("failed to start HTTP server: %s", err.Error()))
@@ -259,28 +339,6 @@ func mustNewLeaderNode() *Node {
 	return node
 }
 
-type mockTransport struct {
-	ln net.Listener
-}
-
-func mustMockTransport(addr string) *mockTransport {
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		panic("failed to create new transport")
-	}
-	return &mockTransport{ln}
-}
-
-func (m *mockTransport) Dial(addr string, timeout time.Duration) (net.Conn, error) {
-	return net.DialTimeout("tcp", addr, timeout)
-}
-
-func (m *mockTransport) Accept() (net.Conn, error) { return m.ln.Accept() }
-
-func (m *mockTransport) Close() error { return m.ln.Close() }
-
-func (m *mockTransport) Addr() net.Addr { return m.ln.Addr() }
-
 func mustTempDir() string {
 	var err error
 	path, err := ioutil.TempDir("", "rqlilte-system-test-")
@@ -288,4 +346,14 @@ func mustTempDir() string {
 		panic("failed to create temp dir")
 	}
 	return path
+}
+
+func isJSON(s string) bool {
+	var js map[string]interface{}
+	return json.Unmarshal([]byte(s), &js) == nil
+}
+
+// rr is a helper function that forms expected Raft responses.
+func rr(nodeID string, idx int) string {
+	return fmt.Sprintf(`"raft":{"index":%d,"node_id":"%s"}`, idx, nodeID)
 }

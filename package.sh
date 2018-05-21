@@ -2,21 +2,21 @@
 #
 # Simple script for creating releases.
 #
-# To determine the release ID, execute this command:
+# To determine the GitHub release ID, execute this command:
 #
 #   curl https://api.github.com/repos/rqlite/rqlite/releases
 #
 
 if [ $# -lt 1 ]; then
-    echo "$0 <version> [api_token release_id]"
+    echo "$0 <version> [release_id api_token]"
     exit 1
 fi
 
 REPO_URL="https://github.com/rqlite/rqlite"
 
 VERSION=$1
-API_TOKEN=$2
-RELEASE_ID=$3
+RELEASE_ID=$2
+API_TOKEN=$3
 
 tmp_build=`mktemp -d`
 tmp_pkg=`mktemp -d`
@@ -39,7 +39,7 @@ cd rqlite
 go get -d ./...
 go install -ldflags="-X main.version=$VERSION -X main.branch=$branch -X main.commit=$commit -X main.buildtime=$buildtime" ./...
 
-release=`echo rqlited-$VERSION-$kernel-$machine | tr '[:upper:]' '[:lower:]'`
+release=`echo rqlite-$VERSION-$kernel-$machine | tr '[:upper:]' '[:lower:]'`
 release_pkg=${release}.tar.gz
 mkdir $tmp_pkg/$release
 cp $GOPATH/bin/rqlited $tmp_pkg/$release

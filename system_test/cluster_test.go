@@ -1,11 +1,14 @@
 package system
 
 import (
+	"fmt"
 	"testing"
 )
 
 // Test_JoinLeaderNode tests a join operation between a leader and a new node.
 func Test_JoinLeaderNode(t *testing.T) {
+	t.Parallel()
+
 	leader := mustNewLeaderNode()
 	defer leader.Deprovision()
 
@@ -22,6 +25,8 @@ func Test_JoinLeaderNode(t *testing.T) {
 
 // Test_MultiNodeCluster tests formation of a 3-node cluster, and its operation.
 func Test_MultiNodeCluster(t *testing.T) {
+	t.Parallel()
+
 	node1 := mustNewLeaderNode()
 	defer node1.Deprovision()
 
@@ -47,7 +52,6 @@ func Test_MultiNodeCluster(t *testing.T) {
 	if err := node3.Join(leader); err != nil {
 		t.Fatalf("node failed to join leader: %s", err.Error())
 	}
-	node3.WaitForLeader()
 	_, err = node3.WaitForLeader()
 	if err != nil {
 		t.Fatalf("failed waiting for leader: %s", err.Error())
@@ -68,12 +72,12 @@ func Test_MultiNodeCluster(t *testing.T) {
 	}{
 		{
 			stmt:     `CREATE TABLE foo (id integer not null primary key, name text)`,
-			expected: `{"results":[{}]}`,
+			expected: fmt.Sprintf(`{"results":[{}],%s}`, rr(leader.ID, 7)),
 			execute:  true,
 		},
 		{
 			stmt:     `INSERT INTO foo(name) VALUES("fiona")`,
-			expected: `{"results":[{"last_insert_id":1,"rows_affected":1}]}`,
+			expected: fmt.Sprintf(`{"results":[{"last_insert_id":1,"rows_affected":1}],%s}`, rr(leader.ID, 8)),
 			execute:  true,
 		},
 		{
@@ -107,7 +111,7 @@ func Test_MultiNodeCluster(t *testing.T) {
 		t.Fatalf("failed to find new cluster leader after killing leader: %s", err.Error())
 	}
 
-	// Run queries against 2-node cluster.
+	// Run queries against the now 2-node cluster.
 	tests = []struct {
 		stmt     string
 		expected string
@@ -115,12 +119,12 @@ func Test_MultiNodeCluster(t *testing.T) {
 	}{
 		{
 			stmt:     `CREATE TABLE foo (id integer not null primary key, name text)`,
-			expected: `{"results":[{"error":"table foo already exists"}]}`,
+			expected: fmt.Sprintf(`{"results":[{"error":"table foo already exists"}],%s}`, rr(leader.ID, 10)),
 			execute:  true,
 		},
 		{
 			stmt:     `INSERT INTO foo(name) VALUES("sinead")`,
-			expected: `{"results":[{"last_insert_id":2,"rows_affected":1}]}`,
+			expected: fmt.Sprintf(`{"results":[{"last_insert_id":2,"rows_affected":1}],%s}`, rr(leader.ID, 11)),
 			execute:  true,
 		},
 		{
